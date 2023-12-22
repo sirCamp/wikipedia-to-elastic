@@ -1,7 +1,7 @@
 {
-  "exportMethod": "elastic",
+  "exportMethod": "json_files",
   "extractRelationFields": false,
-  "wikipediaDump": "dumps/tinywiki-latest-pages-articles.xml.bz2",
+  "wikipediaDump": "dumps/enwiki-20231201-pages-articles-multistream.xml.bz2",
   "lang": "en",
   "includeRawText" : false,
   "includeParsedParagraphs": true,
@@ -10,5 +10,7 @@
     "Infobox",
     "Parenthesis",
     "PartName"
-  ]
+  ],
+  "extractRelationFields": true,
+  "extractCanonicalUrl": true
 }

@@ -4,6 +4,8 @@
 
 package wiki.utils.parsers;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import wiki.data.WikipediaParsedPage;
@@ -24,16 +26,17 @@ import javax.xml.stream.events.XMLEvent;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.*;
 import java.util.concurrent.*;
 
 public class WikipediaSTAXParser implements Closeable {
     private final static Logger LOGGER = LogManager.getLogger(WikipediaSTAXParser.class);
 
     private static final int MAX_WORD_COUNT = 20;
+
+    private final Gson gson = new GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create();
 
     public enum DeleteUpdateMode {DELETE, UPDATE, NA}
 
@@ -52,6 +55,7 @@ public class WikipediaSTAXParser implements Closeable {
     private final ExecutorService executorService;
     private final Set<Long> totalIds = new HashSet<>();
     private boolean extractFields;
+    private boolean extractCanonicalUrl;
     private DeleteUpdateMode deleteUpdateMode;
 
 
@@ -59,6 +63,7 @@ public class WikipediaSTAXParser implements Closeable {
         this.executorService = SimpleExecutorService.initExecutorService();
         this.handler = handler;
         this.extractFields = true;
+        this.extractCanonicalUrl = true;
         this.deleteUpdateMode = DeleteUpdateMode.NA;
         this.filterTitles = langConfig.getTitlesPref().toArray(new String[0]);
         this.redirectTextPrefix = "#" + langConfig.getRedirect();
@@ -70,6 +75,7 @@ public class WikipediaSTAXParser implements Closeable {
         this(handler, langConfig, config.isIncludeRawText(), config.isIncludeParsedParagraphs());
         this.deleteUpdateMode = mode;
         this.extractFields = config.isExtractRelationFields();
+        this.extractCanonicalUrl = config.isExtractCanonicalUrl();
     }
 
     /**
@@ -94,6 +100,35 @@ public class WikipediaSTAXParser implements Closeable {
         }
     }
 
+
+    public String getCanonicalUrl(long id) throws Exception{
+        String url = "https://en.wikipedia.org/w/api.php?action=query&prop=info&pageids="+id+"&inprop=url&format=json";
+        URL urlToOpen = new URL(url);
+        HttpURLConnection conn = (HttpURLConnection)urlToOpen.openConnection();
+        conn.setRequestMethod("GET");
+        conn.connect();
+        int responsecode = conn.getResponseCode();
+        if(responsecode!=200) {
+            throw new IOException("Url " + url + " is not valid! HttpResponse: "+responsecode);
+        }
+        else{
+            String jsonString = "";
+            Scanner sc = new Scanner(urlToOpen.openStream());
+            while(sc.hasNext())
+            {
+                jsonString+=sc.nextLine();
+            }
+            sc.close();
+            Map map = this.gson.fromJson(jsonString, Map.class);
+            String canonicalUrl =
+                    ((Map)((Map)((Map)map.get("query")).get("pages")).get(String.valueOf(id)))
+                            .get("canonicalurl").toString();
+
+            return canonicalUrl;
+        }
+
+    }
+
     /**
      * Parse xml "page" element (represent a full wikipedia page with attributes)
      * Extract the main attributes of {title, redirect, id, text}
@@ -105,6 +140,7 @@ public class WikipediaSTAXParser implements Closeable {
         long id = -1;
         String text = null;
         String redirect = null;
+        String url = "https://en.wikipedia.org/wiki?curid=";
         while (reader.hasNext()) {
             final XMLEvent event = reader.nextEvent();
             if (event.isEndElement() && event.asEndElement().getName().getLocalPart().equals(PAGE_ELEMENT)) {
@@ -124,6 +160,17 @@ public class WikipediaSTAXParser implements Closeable {
                         if(id == -1) {
                             id = Long.parseLong(reader.getElementText());
                             totalIds.add(id);
+                            url+=id;
+                            if(this.extractCanonicalUrl){
+                                try{
+                                    url = this.getCanonicalUrl(id);
+                                }
+                                catch (Exception e){
+                                    LOGGER.error(e);
+                                }
+                            }
+
+
                         }
                         break;
                     case TEXT_ELEMENT:
@@ -141,10 +188,10 @@ public class WikipediaSTAXParser implements Closeable {
                 if (this.handler.isPageExists(String.valueOf(id))) {
                     LOGGER.info("Page with id-" + id + ", title-" + title + ", already exist, moving on...");
                 } else {
-                    handlePage(title, id, text, redirect);
+                    handlePage(title, id, text, redirect, url);
                 }
             } else {
-                handlePage(title, id, text, redirect);
+                handlePage(title, id, text, redirect, url);
             }
         }
     }
@@ -152,7 +199,7 @@ public class WikipediaSTAXParser implements Closeable {
     /**
      * Processing the page in a separate thread (extracting relations and adding to persistence queue)
      */
-    private void handlePage(String title, long id, String text, String redirect) {
+    private void handlePage(String title, long id, String text, String redirect, String url) {
         String titleLow = title.toLowerCase();
         // If page is a meta data page, don't process it
         if(Arrays.stream(filterTitles).parallel().anyMatch(titleLow::contains)) {
@@ -175,6 +222,7 @@ public class WikipediaSTAXParser implements Closeable {
                             .setId(id)
                             .setTitle(title)
                             .setRedirectTitle(redirect)
+                            .setUrl(url)
                             .setRelations(relations);
 
                     if(includeRawText && !text.isEmpty()) {

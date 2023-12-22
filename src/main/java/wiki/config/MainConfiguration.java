@@ -19,7 +19,7 @@ public class MainConfiguration {
     private boolean includeRawText;
     private boolean includeParsedParagraphs;
     private List<RelationType> relationTypes;
-
+    private boolean extractCanonicalUrl;
     public String getExportMethod() {
         return exportMethod;
     }
@@ -90,5 +90,13 @@ public class MainConfiguration {
 
     public void setWikidataJsonOutput(String wikidataJsonOutput) {
         this.wikidataJsonOutput = wikidataJsonOutput;
+    }
+
+    public boolean isExtractCanonicalUrl() {
+        return extractCanonicalUrl;
+    }
+
+    public void setExtractCanonicalUrl(boolean extractCanonicalUrl) {
+        this.extractCanonicalUrl = extractCanonicalUrl;
     }
 }
